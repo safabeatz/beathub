@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Signature Pad</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        :root {
+            --tg-theme-bg-color: #ffffff;
+            --tg-theme-button-color: #248bcf;
+            --tg-theme-button-text-color: #ffffff;
+        }
+        body {
+            background-color: var(--tg-theme-bg-color);
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+        .container { width: 90%; text-align: center; }
+        h3 { margin-bottom: 15px; color: #888; font-weight: 400; }
+
+        #canvas-container {
+            width: 100%;
+            aspect-ratio: 16/9;
+            background: #f1f1f1;
+            border: 2px dashed #ccc;
+            border-radius: 12px;
+            position: relative;
+            touch-action: none; /* Важно для работы сенсора */
+        }
+        canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+            border-radius: 12px;
+        }
+        .buttons {
+            margin-top: 20px;
+            display: flex;
+            gap: 10px;
+            width: 100%;
+        }
+        button {
+            flex: 1;
+            padding: 15px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        .clear-btn { background: #ff3b30; color: white; }
+        .save-btn {
+            background: var(--tg-theme-button-color);
+            color: var(--tg-theme-button-text-color);
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h3>Поставьте подпись ниже</h3>
+    <div id="canvas-container">
+        <canvas id="signature-pad"></canvas>
+    </div>
+
+    <div class="buttons">
+        <button class="clear-btn" onclick="clearPad()">Очистить</button>
+        <button class="save-btn" onclick="sendData()">Готово</button>
+    </div>
+</div>
+
+<script>
+    const tg = window.Telegram.WebApp;
+    tg.expand(); // Разворачиваем на весь экран
+
+    const canvas = document.getElementById('signature-pad');
+    const ctx = canvas.getContext('2d');
+    let isDrawing = false;
+
+    // Подстраиваем размер холста под экран
+    function resizeCanvas() {
+        const ratio = window.devicePixelRatio || 1;
+        canvas.width = canvas.offsetWidth * ratio;
+        canvas.height = canvas.offsetHeight * ratio;
+        ctx.scale(ratio, ratio);
+
+        // Настройки кисти
+        ctx.strokeStyle = "#000000";
+        ctx.lineWidth = 3;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+    }
+
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    // Логика рисования (мышь + сенсор)
+    function startDrawing(e) {
+        isDrawing = true;
+        const pos = getPos(e);
+        ctx.beginPath();
+        ctx.moveTo(pos.x, pos.y);
+    }
+
+    function draw(e) {
+        if (!isDrawing) return;
+        e.preventDefault();
+        const pos = getPos(e);
+        ctx.lineTo(pos.x, pos.y);
+        ctx.stroke();
+    }
+
+    function stopDrawing() { isDrawing = false; }
+
+    function getPos(e) {
+        const rect = canvas.getBoundingClientRect();
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        return {
+            x: clientX - rect.left,
+            y: clientY - rect.top
+        };
+    }
+
+    // События
+    canvas.addEventListener('mousedown', startDrawing);
+    canvas.addEventListener('mousemove', draw);
+    window.addEventListener('mouseup', stopDrawing);
+
+    canvas.addEventListener('touchstart', startDrawing);
+    canvas.addEventListener('touchmove', draw);
+    canvas.addEventListener('touchend', stopDrawing);
+
+    function clearPad() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+
+    function sendData() {
+        // Проверяем, не пустой ли холст (опционально)
+        const dataURL = canvas.toDataURL("image/png");
+
+        // Отправляем данные в бота
+        tg.sendData(dataURL);
+        tg.close();
+    }
+</script>
+
+</body>
+</html>
