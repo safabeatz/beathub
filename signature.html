@@ -2,154 +2,183 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Signature Pad</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>BeatHub Signature</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
         :root {
-            --tg-theme-bg-color: #ffffff;
-            --tg-theme-button-color: #248bcf;
-            --tg-theme-button-text-color: #ffffff;
+            --bg-dark: #0A0A0A;
+            --container-card: #141414;
+            --accent-gray: #222222;
+            --canvas-fill: #1A1A1A;
         }
+
+        /* Фиксируем body, чтобы не было скролла и прыжков */
         body {
-            background-color: var(--tg-theme-bg-color);
-            margin: 0;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
+            background-color: var(--bg-dark);
+            margin: 0; padding: 0;
+            display: flex; flex-direction: column; align-items: center;
+            justify-content: flex-start;
+            font-family: -apple-system, system-ui, sans-serif;
+            height: 100vh; color: white;
             overflow: hidden;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            position: fixed; /* Важно для мобилок */
+            width: 100%;
         }
-        .container { width: 90%; text-align: center; }
-        h3 { margin-bottom: 15px; color: #888; font-weight: 400; }
+
+        .container {
+            width: 90%; max-width: 380px;
+            background: var(--container-card);
+            margin-top: 40px;
+            padding: 30px 20px;
+            border-radius: 28px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.6);
+            text-align: center;
+            border: 1px solid #1f1f1f;
+            box-sizing: border-box;
+            user-select: none;
+        }
+
+        h3 { font-size: 20px; margin: 0 0 8px 0; }
+        p { color: #666; font-size: 13px; margin-bottom: 25px; }
 
         #canvas-container {
-            width: 100%;
-            aspect-ratio: 16/9;
-            background: #f1f1f1;
-            border: 2px dashed #ccc;
-            border-radius: 12px;
-            position: relative;
-            touch-action: none; /* Важно для работы сенсора */
+            width: 100%; aspect-ratio: 4/3;
+            background: var(--canvas-fill);
+            border: 1px solid var(--accent-gray);
+            border-radius: 18px;
+            touch-action: none; /* Отключает жесты браузера на холсте */
+            overflow: hidden;
         }
-        canvas {
-            width: 100%;
-            height: 100%;
-            display: block;
-            border-radius: 12px;
-        }
-        .buttons {
-            margin-top: 20px;
-            display: flex;
-            gap: 10px;
-            width: 100%;
-        }
-        button {
-            flex: 1;
-            padding: 15px;
-            border: none;
-            border-radius: 10px;
-            font-size: 16px;
-            font-weight: bold;
-            cursor: pointer;
-        }
-        .clear-btn { background: #ff3b30; color: white; }
-        .save-btn {
-            background: var(--tg-theme-button-color);
-            color: var(--tg-theme-button-text-color);
+
+        canvas { width: 100%; height: 100%; display: block; cursor: crosshair; }
+
+        .clear-btn {
+            margin-top: 20px; width: 100%; padding: 14px;
+            background: transparent; color: #555;
+            border: 1px solid var(--accent-gray); border-radius: 12px;
+            font-size: 12px; font-weight: 600; text-transform: uppercase;
         }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h3>Поставьте подпись ниже</h3>
+    <h3>Подпись</h3>
+    <p>Распишитесь пальцем в поле ниже</p>
     <div id="canvas-container">
         <canvas id="signature-pad"></canvas>
     </div>
-
-    <div class="buttons">
-        <button class="clear-btn" onclick="clearPad()">Очистить</button>
-        <button class="save-btn" onclick="sendData()">Готово</button>
-    </div>
+    <button class="clear-btn" onclick="clearPad()">Очистить</button>
 </div>
 
 <script>
     const tg = window.Telegram.WebApp;
-    tg.expand(); // Разворачиваем на весь экран
+    tg.ready();
+    tg.expand();
+
+    // Блокируем закрытие свайпом вниз
+    if (tg.disableVerticalSwipes) {
+        tg.disableVerticalSwipes();
+    }
+
+    tg.MainButton.text = "ОТПРАВИТЬ ПОДПИСЬ";
+    tg.MainButton.setParams({ color: '#FFFFFF', text_color: '#000000' });
 
     const canvas = document.getElementById('signature-pad');
     const ctx = canvas.getContext('2d');
     let isDrawing = false;
+    let hasContent = false;
+    let points = [];
 
-    // Подстраиваем размер холста под экран
-    function resizeCanvas() {
+    function initCanvas() {
         const ratio = window.devicePixelRatio || 1;
-        canvas.width = canvas.offsetWidth * ratio;
-        canvas.height = canvas.offsetHeight * ratio;
+        const rect = canvas.getBoundingClientRect();
+        canvas.width = rect.width * ratio;
+        canvas.height = rect.height * ratio;
         ctx.scale(ratio, ratio);
 
-        // Настройки кисти
-        ctx.strokeStyle = "#000000";
+        ctx.strokeStyle = "#FFFFFF";
         ctx.lineWidth = 3;
         ctx.lineCap = "round";
         ctx.lineJoin = "round";
     }
 
-    window.addEventListener('resize', resizeCanvas);
-    resizeCanvas();
-
-    // Логика рисования (мышь + сенсор)
-    function startDrawing(e) {
-        isDrawing = true;
-        const pos = getPos(e);
-        ctx.beginPath();
-        ctx.moveTo(pos.x, pos.y);
-    }
-
-    function draw(e) {
-        if (!isDrawing) return;
-        e.preventDefault();
-        const pos = getPos(e);
-        ctx.lineTo(pos.x, pos.y);
-        ctx.stroke();
-    }
-
-    function stopDrawing() { isDrawing = false; }
+    window.addEventListener('resize', initCanvas);
+    initCanvas();
 
     function getPos(e) {
         const rect = canvas.getBoundingClientRect();
         const clientX = e.touches ? e.touches[0].clientX : e.clientX;
         const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-        return {
-            x: clientX - rect.left,
-            y: clientY - rect.top
-        };
+        return { x: clientX - rect.left, y: clientY - rect.top };
     }
 
-    // События
+    function startDrawing(e) {
+        // Предотвращаем системные действия (скролл, закрытие)
+        if (e.cancelable) e.preventDefault();
+
+        isDrawing = true;
+        hasContent = true;
+        tg.MainButton.show();
+
+        const pos = getPos(e);
+        ctx.beginPath();
+        ctx.moveTo(pos.x, pos.y);
+
+        points.push("S");
+        points.push([Math.round(pos.x), Math.round(pos.y)]);
+    }
+
+    function draw(e) {
+        if (!isDrawing) return;
+        if (e.cancelable) e.preventDefault();
+
+        const pos = getPos(e);
+        ctx.lineTo(pos.x, pos.y);
+        ctx.stroke();
+
+        points.push([Math.round(pos.x), Math.round(pos.y)]);
+    }
+
+    function stopDrawing() {
+        isDrawing = false;
+    }
+
+    // Слушатели для мыши
     canvas.addEventListener('mousedown', startDrawing);
     canvas.addEventListener('mousemove', draw);
     window.addEventListener('mouseup', stopDrawing);
 
-    canvas.addEventListener('touchstart', startDrawing);
-    canvas.addEventListener('touchmove', draw);
-    canvas.addEventListener('touchend', stopDrawing);
+    // Слушатели для тач-скрина (с passive: false)
+    canvas.addEventListener('touchstart', startDrawing, {passive: false});
+    canvas.addEventListener('touchmove', draw, {passive: false});
+    canvas.addEventListener('touchend', stopDrawing, {passive: false});
 
     function clearPad() {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
+        hasContent = false;
+        points = [];
+        tg.MainButton.hide();
     }
 
-    function sendData() {
-        // Проверяем, не пустой ли холст (опционально)
-        const dataURL = canvas.toDataURL("image/png");
+    tg.onEvent('mainButtonClicked', function() {
+        if (!hasContent) return;
 
-        // Отправляем данные в бота
-        tg.sendData(dataURL);
-        tg.close();
-    }
+        // Компактная упаковка координат
+        const compressedData = points.map(p => Array.isArray(p) ? p.join(',') : p).join('|');
+
+        if (compressedData.length > 4096) {
+            alert("Подпись слишком сложная, попробуйте немного проще");
+            return;
+        }
+
+        tg.sendData(compressedData);
+
+        setTimeout(() => {
+            tg.close();
+        }, 150);
+    });
 </script>
 
 </body>
