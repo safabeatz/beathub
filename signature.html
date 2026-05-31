@@ -14,48 +14,35 @@
             --line:      #404040;
             --dim:       #666;
         }
-
         * { box-sizing: border-box; }
-
         body {
-            background: var(--bg);
-            margin: 0; padding: 0;
+            background: var(--bg); margin: 0; padding: 0;
             display: flex; flex-direction: column;
             align-items: center; justify-content: flex-start;
             font-family: -apple-system, system-ui, sans-serif;
             height: 100vh; color: #fff;
             overflow: hidden; position: fixed; width: 100%;
         }
-
         .container {
             width: 92%; max-width: 420px;
             background: var(--card);
-            margin-top: 32px;
-            padding: 24px 20px 20px;
+            margin-top: 32px; padding: 24px 20px 20px;
             border-radius: 24px;
             box-shadow: 0 16px 40px rgba(0,0,0,0.7);
-            border: 1px solid var(--border);
-            user-select: none;
+            border: 1px solid var(--border); user-select: none;
         }
-
         .title { font-size: 16px; font-weight: 600; margin: 0 0 4px; text-align: center; }
         .hint  { color: var(--dim); font-size: 12px; margin: 0 0 16px; text-align: center; }
-
-        /* aspect-ratio 8:3 = 914400 EMU / 342900 EMU (exact contract size) */
+        /* 8:3 = 914400 / 342900 EMU — exact contract signature dimensions */
         #canvas-container {
             width: 100%; aspect-ratio: 8 / 3;
             background: var(--canvas-bg);
             border: 1px solid var(--border);
-            border-radius: 10px 10px 0 0;
-            border-bottom: none;
+            border-radius: 10px 10px 0 0; border-bottom: none;
             touch-action: none; overflow: hidden;
         }
-
         canvas { width: 100%; height: 100%; display: block; cursor: crosshair; }
-
-        /* Baseline — bottom edge of the signature image in the contract */
         .sig-line { width: 100%; height: 1px; background: var(--line); }
-
         .clear-btn {
             margin-top: 14px; width: 100%; padding: 11px;
             background: transparent; color: var(--dim);
@@ -66,7 +53,6 @@
     </style>
 </head>
 <body>
-
 <div class="container">
     <p class="title">Подпись</p>
     <p class="hint">Нарисуйте подпись выше черты</p>
@@ -79,8 +65,7 @@
 
 <script>
     const tg = window.Telegram.WebApp;
-    tg.ready();
-    tg.expand();
+    tg.ready(); tg.expand();
     if (tg.disableVerticalSwipes) tg.disableVerticalSwipes();
 
     tg.MainButton.text = "ОТПРАВИТЬ ПОДПИСЬ";
@@ -88,16 +73,19 @@
 
     const canvas = document.getElementById('signature-pad');
     const ctx    = canvas.getContext('2d');
+    const LW     = 2.5;  // stroke width in CSS px
 
-    let isDrawing = false;
+    let isDrawing  = false;
     let hasContent = false;
-    let segments  = [];   // completed polylines: [{x,y}, ...][]
-    let curSeg    = null; // polyline being drawn right now
+    let segments   = [];   // finished polylines: [{x,y}[]]
+    let curSeg     = null; // polyline in progress
+    let lastPos    = null; // previous point for incremental drawing
 
-    // ── Canvas init — preserves drawing on resize ────────────────────────────
+    // ─── Canvas setup ────────────────────────────────────────────────────────
     function setupCtx() {
         ctx.strokeStyle = '#FFFFFF';
-        ctx.lineWidth   = 2.5;
+        ctx.fillStyle   = '#FFFFFF';
+        ctx.lineWidth   = LW;
         ctx.lineCap     = 'round';
         ctx.lineJoin    = 'round';
     }
@@ -112,19 +100,28 @@
         redraw();
     }
 
-    // Replay all stored segments — called after every resize
+    // Replay all stored strokes — called after every resize
     function redraw() {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-        for (const seg of segments) {
-            if (seg.length < 2) continue;
-            ctx.beginPath();
-            ctx.moveTo(seg[0].x, seg[0].y);
-            for (let i = 1; i < seg.length; i++) ctx.lineTo(seg[i].x, seg[i].y);
-            ctx.stroke();
+        // include curSeg so a resize mid-stroke doesn't lose current line
+        const all = curSeg ? [...segments, curSeg] : segments;
+        for (const seg of all) {
+            if (!seg.length) continue;
+            if (seg.length === 1) {
+                // single tap — draw a dot
+                ctx.beginPath();
+                ctx.arc(seg[0].x, seg[0].y, LW / 2, 0, Math.PI * 2);
+                ctx.fill();
+            } else {
+                ctx.beginPath();
+                ctx.moveTo(seg[0].x, seg[0].y);
+                for (let i = 1; i < seg.length; i++) ctx.lineTo(seg[i].x, seg[i].y);
+                ctx.stroke();
+            }
         }
     }
 
-    // Debounce resize: only reinit after the viewport settles (avoids flicker on keyboard open)
+    // Debounce resize so viewport flickers (Telegram WebApp adjustments) don't wipe the canvas
     let resizeTimer;
     window.addEventListener('resize', () => {
         clearTimeout(resizeTimer);
@@ -133,37 +130,50 @@
 
     initCanvas();
 
-    // ── Input helpers ────────────────────────────────────────────────────────
+    // ─── Coordinate helper ───────────────────────────────────────────────────
     function getPos(e) {
         const rect = canvas.getBoundingClientRect();
         const src  = e.touches ? e.touches[0] : e;
         return { x: src.clientX - rect.left, y: src.clientY - rect.top };
     }
 
-    // ── Drawing handlers ─────────────────────────────────────────────────────
+    // ─── Drawing ─────────────────────────────────────────────────────────────
     function startDrawing(e) {
         if (e.cancelable) e.preventDefault();
         isDrawing  = true;
         hasContent = true;
         tg.MainButton.show();
+
         const p = getPos(e);
-        curSeg = [p];
+        lastPos = p;
+        curSeg  = [p];
+
+        // Draw the first dot immediately so the stroke start is always visible
         ctx.beginPath();
-        ctx.moveTo(p.x, p.y);
+        ctx.arc(p.x, p.y, LW / 2, 0, Math.PI * 2);
+        ctx.fill();
     }
 
     function draw(e) {
-        if (!isDrawing) return;
+        if (!isDrawing || !lastPos) return;
         if (e.cancelable) e.preventDefault();
+
         const p = getPos(e);
         curSeg.push(p);
+
+        // Draw only the new micro-segment (last → current), no path accumulation
+        ctx.beginPath();
+        ctx.moveTo(lastPos.x, lastPos.y);
         ctx.lineTo(p.x, p.y);
         ctx.stroke();
+
+        lastPos = p;
     }
 
     function stopDrawing() {
         if (!isDrawing) return;
         isDrawing = false;
+        lastPos   = null;
         if (curSeg && curSeg.length > 0) {
             segments.push(curSeg);
             curSeg = null;
@@ -177,19 +187,18 @@
     canvas.addEventListener('touchmove',  draw,         { passive: false });
     canvas.addEventListener('touchend',   stopDrawing,  { passive: false });
 
-    // ── Clear ────────────────────────────────────────────────────────────────
+    // ─── Clear ───────────────────────────────────────────────────────────────
     function clearPad() {
-        segments = []; curSeg = null; hasContent = false;
+        segments = []; curSeg = null; lastPos = null; hasContent = false;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         tg.MainButton.hide();
     }
 
-    // ── Send ─────────────────────────────────────────────────────────────────
+    // ─── Send ────────────────────────────────────────────────────────────────
     tg.onEvent('mainButtonClicked', function () {
         if (!hasContent) return;
 
-        // Serialize to the format the Python parser expects:
-        // "S|x,y|x,y|S|x,y|x,y"  (S marks segment start)
+        // Serialize: "S|x,y|x,y|S|x,y|x,y" — Python parser expects this format
         const parts = [];
         for (const seg of segments) {
             parts.push('S');
@@ -201,11 +210,9 @@
             alert('Подпись слишком сложная — попробуйте упростить');
             return;
         }
-
         tg.sendData(data);
         setTimeout(() => tg.close(), 150);
     });
 </script>
-
 </body>
 </html>
